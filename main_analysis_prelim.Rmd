@@ -16,8 +16,6 @@ library(broom)
 library(effsize)
 ```
 
-\newpage
-
 # Analysis Overview
 
 Features exhibiting more than 10% missingness were excluded, and median imputation was applied to remaining missing values. Independent t-tests were performed across all EEG features, adjusting for multiple comparisons using the Bonferroni correction method. Significant group differences (corrected p < 0.05) were identified for 139 EEG spindle and slow oscillation features. Cohen’s d was calculated for each significant feature to quantify the effect size and directionality of differences. The top 10 features with the largest effects were visualized using topographic EEG scalp maps created in Python (MNE library) to demonstrate distinct regional spindle and slow oscillation characteristics between ASD and healthy control groups.
@@ -168,28 +166,56 @@ df = pd.read_csv("data/spindle_data_filtered_imputed.csv")
 # EEG channel information
 channels = ['Fp1', 'Fp2', 'F3', 'F4', 'C3', 'C4', 'P3', 'P4',
             'O1', 'O2', 'F7', 'F8', 'T7', 'T8', 'P7', 'P8', 'Fz', 'Pz', 'Oz']
+
+# Set up montage for visualization
+montage = mne.channels.make_standard_montage('standard_1020')
 info = mne.create_info(channels, sfreq=100, ch_types='eeg')
-info.set_montage('standard_1020')
+info.set_montage(montage)
 
 # Top 10 features
-features = ["SP_CHIRP_all_P7", "SP_COUPL_MAG_slow_P7", "SP_DUR_slow_Fp2",
+top_features = ["SP_CHIRP_all_P7", "SP_COUPL_MAG_slow_P7", "SP_DUR_slow_Fp2",
             "SO_TRANS_F3", "SO_NEG_DUR_F3", "SO_POS_DUR_T7", "SO_DUR_F3",
             "SO_TRANS_C3", "SP_COUPL_MAG_all_P8", "SP_ISA_M_slow_F4"]
 
-# Plotting
-fig, axes = plt.subplots(2, 5, figsize=(20, 10))
+# Setup the 2x5 subplot grid
+fig, axes = plt.subplots(2, 5, figsize=(22, 9))
 axes = axes.flatten()
 
-for ax, feat in zip(axes, features):
-    ch = feat.split('_')[-1]
-    diff_array = np.zeros(len(channels))
-    diff_array[channels.index(ch)] = df.groupby('group')[feat].mean().diff().iloc[-1]
+for ax, feature in zip(axes, top_features):
+    prefix = '_'.join(feature.split('_')[:-1])
+    
+    diff_array = []
+    for ch in channels:
+        col_name = f"{prefix}_{ch}"
+        if col_name in df.columns:
+            mean_ASD = df.loc[df['group']=='ASD', col_name].mean()
+            mean_HC = df.loc[df['group']=='HC', col_name].mean()
+            diff = mean_ASD - mean_HC
+            diff = diff if not np.isnan(diff) else 0
+        else:
+            diff = 0
+        diff_array.append(diff)
+    
+    diff_array = np.array(diff_array)
+    max_abs_val = np.max(np.abs(diff_array))
 
-    mne.viz.plot_topomap(diff_array, info, axes=ax, cmap='RdBu_r', show=False)
-    ax.set_title(feat)
+    # Plot with balanced color scale (negative & positive)
+    im, _ = mne.viz.plot_topomap(
+        diff_array, info, axes=ax, cmap='RdBu_r', contours=6,
+        extrapolate='local', show=False, vlim=(-max_abs_val, max_abs_val)
+    )
 
-plt.suptitle('Spatial Distributions (ASD - HC)', fontsize=12)
-plt.tight_layout(rect=[0, 0, 1, 1])
+    ax.set_title(feature, fontsize=12, pad=10)
+
+# Adjust subplot spacing
+fig.subplots_adjust(top=0.88, bottom=0.1, left=0.05, right=0.9, hspace=0.3, wspace=0.2)
+
+# Clear single colorbar (negative to positive)
+cbar_ax = fig.add_axes([0.92, 0.25, 0.015, 0.5])
+fig.colorbar(im, cax=cbar_ax, label='Difference (ASD - HC)')
+
+fig.suptitle('Top 10 EEG Feature Differences (ASD - HC)', fontsize=18)
+
 plt.show()
 ```
 
