@@ -1,0 +1,202 @@
+---
+title: "EEG Spindle Analysis"
+author: "Kevin Liu"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document: 
+    toc: true
+    number_sections: true
+    keep_tex: true
+---
+
+```{r setup, include=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(broom)
+library(effsize)
+```
+
+\newpage
+
+# Analysis Overview
+
+Features exhibiting more than 10% missingness were excluded, and median imputation was applied to remaining missing values. Independent t-tests were performed across all EEG features, adjusting for multiple comparisons using the Bonferroni correction method. Significant group differences (corrected p < 0.05) were identified for 139 EEG spindle and slow oscillation features. Cohen’s d was calculated for each significant feature to quantify the effect size and directionality of differences. The top 10 features with the largest effects were visualized using topographic EEG scalp maps created in Python (MNE library) to demonstrate distinct regional spindle and slow oscillation characteristics between ASD and healthy control groups.
+
+\newpage
+
+# Data Preparation
+
+## Load and Merge Metadata
+
+```{r initial_cleanup, message=FALSE}
+# Load subject metadata
+subject_data <- read_csv("data/eeg_metadata.csv") %>% 
+  mutate(SID = sub("-.*$", "", SID)) %>% 
+  select(SID, sex, age_year)
+
+# Load spindle feature data and merge with subject metadata
+spindle_data <- read_csv("data/features_spindles.csv") %>% 
+  mutate(SID = sub("^(.*?)_.*$", "\\1", SID),
+         SID = sub("-.*$", "", SID)) %>% 
+  inner_join(subject_data, by = "SID") %>% 
+  mutate(group = ifelse(Group == "TD", "HC", "ASD"),
+         sex = ifelse(sex == 1, "M", "F")) %>% 
+  select(SID, group, sex, age_year, everything(), -Group) %>% 
+  column_to_rownames("SID")
+
+# Remove rows with entirely missing data
+spindle_data_usable <- spindle_data %>% 
+  select(-group, -sex, -age_year) %>% 
+  filter(if_any(everything(), ~ !is.na(.)))
+
+# Keep only matched subjects with complete demographic data
+spindle_data_matched <- spindle_data %>% 
+  rownames_to_column("SID") %>% 
+  filter(SID %in% rownames(spindle_data_usable), !is.na(sex)) %>% 
+  column_to_rownames("SID")
+```
+
+\newpage
+
+# Handling Missing Data
+
+```{r handle_missing_data}
+# Identify features with >10% missing data
+gt10p_missing <- spindle_data_matched %>%
+  summarize(across(everything(), ~mean(is.na(.)) * 100)) %>%
+  pivot_longer(everything(), names_to = "Feature", values_to = "Percent_Missing") %>%
+  filter(Percent_Missing > 10) %>% 
+  pull(Feature)
+
+# Remove features and impute remaining missing data with median
+spindle_data_filt_imp <- spindle_data_matched %>%
+  select(-all_of(gt10p_missing)) %>% 
+  mutate(across(where(is.numeric), ~ replace_na(., median(., na.rm = TRUE))),
+         group = factor(group, levels = c("HC", "ASD")),
+         sex = factor(sex, levels = c("F", "M")))
+
+# Export the cleaned and imputed dataset
+spindle_data_filt_imp %>% 
+  rownames_to_column("SID") %>%
+  select(SID, group, everything(), -sex, -age_year) %>% 
+  write.csv("data/spindle_data_filtered_imputed.csv", row.names = FALSE)
+
+# Check distribution by group and sex
+table(spindle_data_filt_imp$group, spindle_data_filt_imp$sex)
+```
+
+\newpage
+
+# Statistical Analysis
+
+## Group-wise Comparisons (t-tests)
+
+```{r t_statistics}
+# Perform independent t-tests by group and adjust for multiple comparisons
+signif_features <- spindle_data_filt_imp %>%
+  select(-sex) %>% 
+  pivot_longer(cols = -group, names_to = "feature", values_to = "value") %>%
+  group_by(feature) %>%
+  nest() %>%
+  mutate(
+    test = map(data, ~ t.test(value ~ group, data = .x)),
+    tidied = map(test, tidy)
+  ) %>%
+  unnest(tidied) %>%
+  select(feature, estimate1, estimate2, statistic, p.value) %>%
+  rename(mean_HC = estimate1, mean_ASD = estimate2, t_stat = statistic, p_value = p.value) %>%
+  mutate(p_adj = p.adjust(p_value, method = "bonferroni")) %>%
+  filter(p_adj < 0.05) %>%
+  arrange(p_adj)
+
+signif_features
+```
+
+\newpage
+
+## Effect Size Calculation (Cohen's d)
+
+```{r effect_sizes}
+# Calculate Cohen's d for each significant feature
+cohens_d_results <- spindle_data_filt_imp %>% 
+  pivot_longer(-c(sex, group), names_to = "feature", values_to = "value") %>%
+  group_by(feature) %>%
+  summarise(cohens_d = cohen.d(value ~ group)$estimate)
+
+# Merge Cohen's d with significant features
+final_ranking <- signif_features %>%
+  left_join(cohens_d_results, by = "feature") %>%
+  mutate(category = case_when(
+    str_detect(feature, "AMP")        ~ "Amplitude",
+    str_detect(feature, "DENS")       ~ "Density",
+    str_detect(feature, "DUR")        ~ "Duration",
+    str_detect(feature, "CHIRP")      ~ "Chirp",
+    str_detect(feature, "COUPL")      ~ "Coupling",
+    str_detect(feature, "ISA_M")      ~ "ISA per Minute",
+    str_detect(feature, "ISA_S")      ~ "ISA per Spindle",
+    str_detect(feature, "ISA_T")      ~ "Total ISA",
+    str_detect(feature, "NOSC")       ~ "Oscillations per Spindle",
+    str_detect(feature, "DISPERSION") ~ "Dispersion Index",
+    str_detect(feature, "FFT")        ~ "Spindle Frequency (FFT)",
+    str_detect(feature, "SYMM2")      ~ "Folded-Symmetry Metric",
+    str_detect(feature, "SYMM")       ~ "Symmetry Metric",
+    TRUE                              ~ "Other"
+  )) %>%
+  arrange(p_adj, desc(abs(cohens_d)))
+
+# Export top 10 significant features
+final_ranking %>% 
+  head(10) %>% 
+  write.csv("data/top10_significant_results.csv", row.names = FALSE)
+
+head(final_ranking, 10)
+```
+
+\newpage
+
+# EEG Visualization (Python & MNE)
+
+```{python mne}
+import pandas as pd
+import numpy as np
+import mne
+import matplotlib.pyplot as plt
+
+# Load cleaned EEG data
+df = pd.read_csv("data/spindle_data_filtered_imputed.csv")
+
+# EEG channel information
+channels = ['Fp1', 'Fp2', 'F3', 'F4', 'C3', 'C4', 'P3', 'P4',
+            'O1', 'O2', 'F7', 'F8', 'T7', 'T8', 'P7', 'P8', 'Fz', 'Pz', 'Oz']
+info = mne.create_info(channels, sfreq=100, ch_types='eeg')
+info.set_montage('standard_1020')
+
+# Top 10 features
+features = ["SP_CHIRP_all_P7", "SP_COUPL_MAG_slow_P7", "SP_DUR_slow_Fp2",
+            "SO_TRANS_F3", "SO_NEG_DUR_F3", "SO_POS_DUR_T7", "SO_DUR_F3",
+            "SO_TRANS_C3", "SP_COUPL_MAG_all_P8", "SP_ISA_M_slow_F4"]
+
+# Plotting
+fig, axes = plt.subplots(2, 5, figsize=(20, 10))
+axes = axes.flatten()
+
+for ax, feat in zip(axes, features):
+    ch = feat.split('_')[-1]
+    diff_array = np.zeros(len(channels))
+    diff_array[channels.index(ch)] = df.groupby('group')[feat].mean().diff().iloc[-1]
+
+    mne.viz.plot_topomap(diff_array, info, axes=ax, cmap='RdBu_r', show=False)
+    ax.set_title(feat)
+
+plt.suptitle('Spatial Distributions (ASD - HC)', fontsize=12)
+plt.tight_layout(rect=[0, 0, 1, 1])
+plt.show()
+```
+
+\newpage
+
+# Environmental Setup
+
+```{r session_info}
+sessionInfo()
+```
