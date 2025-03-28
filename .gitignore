@@ -35,3 +35,8 @@ po/*~
 rsconnect/
 .DS_Store
 data
+manuscript_files/
+main_analysis_prelim_files/
+iso_analysis_outputs/
+*.pdf
+*.tex
