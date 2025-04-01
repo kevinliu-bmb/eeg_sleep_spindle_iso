@@ -39,3 +39,14 @@ data/edf/*
 data/sleep_stages/*
 deprecated/
 outputs/*
+# Python cache files
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment folders
+venv/
+env/
+
+# Other Python-specific ignores
+.ipynb_checkpoints/
