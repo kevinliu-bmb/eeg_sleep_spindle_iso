@@ -59,10 +59,10 @@ def load_eeg_data(base_path):
             edf_file_full = os.path.join(edf_path, edf_file)
 
             if not os.path.exists(stages_file):
-                logging.info(f"Missing sleep stage file for {subject_id}, skipping...")
+                print(f"Missing sleep stage file for {subject_id}, skipping...")
                 continue
             if not os.path.exists(artifact_file):
-                logging.info(f"Missing artifact file for {subject_id}, skipping...")
+                print(f"Missing artifact file for {subject_id}, skipping...")
                 continue
 
             edf_raw = mne.io.read_raw_edf(edf_file_full, preload=False, verbose=False)
@@ -82,7 +82,7 @@ def load_eeg_data(base_path):
                 'artifact_indicator': artifact_indicator
             })
 
-            logging.info(f"Loaded subject {subject_id} from group {group}")
+            print(f"Loaded subject {subject_id} from group {group}")
 
     return data
 

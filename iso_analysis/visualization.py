@@ -1,4 +1,3 @@
-import logging
 import matplotlib.pyplot as plt
 import xml.etree.ElementTree as ET
 import mne
@@ -45,7 +44,7 @@ def plot_iso_single_subject_save(iso_df, subject_id, save_path):
     plt.savefig(save_path, dpi=300)
     plt.close()
 
-    logging.info(f"ISO plot saved to: {save_path}")
+    print(f"ISO plot saved to: {save_path}")
 
 
 def plot_iso_topomap(edf_raw, spec_iso, freq_iso, subject_id, montage_path, save_path):
@@ -127,7 +126,7 @@ def plot_iso_topomap(edf_raw, spec_iso, freq_iso, subject_id, montage_path, save
     # Explicitly save the figure
     plt.savefig(save_path, dpi=300)
     plt.close(fig)
-    logging.info(f"Topomap saved to: {save_path}")
+    print(f"Topomap saved to: {save_path}")
 
 
 def plot_group_iso_ci(
@@ -166,7 +165,7 @@ def plot_group_iso_ci(
         group_data = iso_results_df[iso_results_df[group_col] == group][channel_cols].dropna()
 
         if group_data.empty or np.isnan(group_data.values).all():
-            logging.info(f"Warning: No valid data for group '{group}' in channel '{channel}'. Skipping.")
+            print(f"Warning: No valid data for group '{group}' in channel '{channel}'. Skipping.")
             continue
 
         mean_spectrum, lower_ci, upper_ci = bootstrap_ci(group_data.values, ci=ci)
@@ -183,6 +182,6 @@ def plot_group_iso_ci(
 
     if save_path:
         plt.savefig(save_path, dpi=300)
-        logging.info(f"Group plot saved to {save_path}")
+        print(f"Group plot saved to {save_path}")
 
     plt.close()
