@@ -82,7 +82,7 @@ def load_eeg_data(base_path):
                 'artifact_indicator': artifact_indicator
             })
 
-            print(f"Loaded subject {subject_id} from group {group}")
+            logging.info(f"Loaded subject {subject_id} from group {group}")
 
     return data
 

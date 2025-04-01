@@ -5,31 +5,42 @@ This project provides a structured pipeline for analyzing infraslow oscillations
 ## Project Structure
 
 ```{txt}
-eeg_iso_project/
-    ├── iso_analysis/
-    │   ├── __init__.py
-    │   ├── analysis.py
-    │   ├── io.py
-    │   ├── plotting.py
-    │   └── utils.py
-    ├── data/
-    │   ├── edf/
-    │   │   ├── ASD/
-    │   │   └── TD/
-    │   ├── sleep_stages/
-    │   │   ├── ASD/
-    │   │   └── TD/
-    │   └── artifacts/
-    │       ├── ASD/
-    │       └── TD/
-    ├── eeg_ch_coords/
-    │   ├── coordinates32.xml
-    │   └── coordinates64.xml
-    ├── outputs/ 
-    ├── .gitignore
-    ├── requirements.txt
-    ├── main.py
-    └── README.md
+mgh_eeg_spindle/
+├── iso_analysis/
+│   ├── __init__.py
+│   ├── analysis.py            # ISO analysis pipeline
+│   ├── io.py                  # Data loading utilities
+│   ├── visualization.py       # Visualization utilities
+│   └── utils/
+│       ├── __init__.py
+│       ├── bootstrap.py       # Bootstrapping confidence intervals
+│       └── logging.py         # Logging setup
+├── data/                      # EEG data directory (populate with your data)
+│   ├── edf/
+│   │   ├── ASD/
+│   │   └── TD/
+│   ├── sleep_stages/
+│   │   ├── ASD/
+│   │   └── TD/
+│   └── artifacts/
+│       ├── ASD/
+│       └── TD/
+├── eeg_ch_coords/             # EEG electrode coordinates
+│   ├── coordinates32.xml
+│   └── coordinates64.xml
+├── outputs/                   # Analysis results (auto-generated)
+│   └── iso_results_<timestamp>/
+│       ├── analysis.log
+│       └── iso_results_<timestamp>/
+│           ├── iso_analysis_all_subjects.csv
+│           ├── iso_additional_metrics.csv
+│           ├── spectra/
+│           ├── group_plots/
+│           └── subject_plots/
+├── .gitignore
+├── requirements.txt
+├── main.py                    # Main executable script
+└── README.md                  # Project documentation
 ```
 
 ## Installation
@@ -37,8 +48,8 @@ eeg_iso_project/
 Clone the Repository
 
 ```{bash}
-git clone https://github.com/yourusername/eeg_iso_project.git
-cd eeg_iso_project
+git clone https://github.com/kevinliu-bmb/mgh_eeg_spindle
+cd mgh_eeg_spindle
 ```
 
 ## Install Dependencies

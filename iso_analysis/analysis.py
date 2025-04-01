@@ -1,5 +1,7 @@
 import os
 from datetime import datetime
+import logging
+from tqdm import tqdm
 import numpy as np
 import pandas as pd
 from itertools import groupby
@@ -157,7 +159,7 @@ def get_iso(edf, sleep_stages, artifact_indicator, ch_groups):
 
         # Explicit handling if no valid epochs found
         if len(spec_isos) == 0:
-            print(f"No valid epochs for channel {ch_groups[chi]}. Returning NaN.")
+            logging.warning(f"No valid epochs for channel {ch_groups[chi]}. Returning NaN.")
             spec_iso_ch = np.full((1, len(freq_iso)), np.nan)
         else:
             spec_iso_ch = np.nanmean(np.array(spec_isos), axis=0)
@@ -212,16 +214,18 @@ def run_iso_analysis(
     os.makedirs(topomaps_dir, exist_ok=True)
     os.makedirs(group_plot_dir, exist_ok=True)
 
-    print(f"Results will be saved to: {output_folder}")
+    logging.info(f"Results will be saved to: {output_folder}")
 
     iso_results = []
     additional_metrics = []
     freq_iso = None
 
-    for idx, subject in enumerate(data_list):
+    for idx, subject in enumerate(tqdm(data_list, desc="Running ISO Analysis")):
         subject_id = subject["subject_id"]
         group = subject["group"]
-        print(f"\n[{idx+1}/{len(data_list)}] Processing subject: {subject_id} ({group})")
+
+        tqdm.write(f"[{idx+1}/{len(data_list)}] Processing subject: {subject_id} ({group})")
+        logging.info(f"Processing subject: {subject_id} ({group})")
 
         try:
             edf_raw = subject["edf"].copy().load_data()
@@ -288,19 +292,20 @@ def run_iso_analysis(
             additional_metrics.append({**band_power_dict, **peak_freq_dict})
 
         except Exception as e:
-            print(f"Error processing subject {subject_id}: {e}")
+            tqdm.write(f"Error processing subject {subject_id}: {e}")
+            logging.error(f"Error processing subject {subject_id}: {e}", exc_info=True)
 
     # Save ISO results explicitly
     iso_results_df = pd.DataFrame(iso_results)
     iso_results_csv = os.path.join(output_folder, "iso_analysis_all_subjects.csv")
     iso_results_df.to_csv(iso_results_csv, index=False)
-    print(f"\nISO spectra results saved: {iso_results_csv}")
+    logging.info(f"\nISO spectra results saved: {iso_results_csv}")
 
     # Save additional metrics explicitly
     additional_metrics_df = pd.DataFrame(additional_metrics)
     metrics_csv = os.path.join(output_folder, "iso_additional_metrics.csv")
     additional_metrics_df.to_csv(metrics_csv, index=False)
-    print(f"Additional ISO metrics saved: {metrics_csv}")
+    logging.info(f"Additional ISO metrics saved: {metrics_csv}")
 
     # Generate and explicitly save group-wise ISO plots
     for channel in edf_raw.ch_names:
