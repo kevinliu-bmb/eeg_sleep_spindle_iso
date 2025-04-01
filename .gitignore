@@ -40,3 +40,5 @@ main_analysis_prelim_files/
 iso_analysis_outputs/
 *.pdf
 *.tex
+*.xml
+eeg_ch_coords/
