@@ -1,4 +1,5 @@
 import os
+import logging
 import numpy as np
 import mne
 import xml.etree.ElementTree as ET
@@ -58,10 +59,10 @@ def load_eeg_data(base_path):
             edf_file_full = os.path.join(edf_path, edf_file)
 
             if not os.path.exists(stages_file):
-                print(f"Missing sleep stage file for {subject_id}, skipping...")
+                logging.info(f"Missing sleep stage file for {subject_id}, skipping...")
                 continue
             if not os.path.exists(artifact_file):
-                print(f"Missing artifact file for {subject_id}, skipping...")
+                logging.info(f"Missing artifact file for {subject_id}, skipping...")
                 continue
 
             edf_raw = mne.io.read_raw_edf(edf_file_full, preload=False, verbose=False)
@@ -81,7 +82,7 @@ def load_eeg_data(base_path):
                 'artifact_indicator': artifact_indicator
             })
 
-            print(f"Loaded subject {subject_id} from group {group}")
+            logging.info(f"Loaded subject {subject_id} from group {group}")
 
     return data
 

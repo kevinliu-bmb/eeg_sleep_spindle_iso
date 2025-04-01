@@ -1,5 +1,23 @@
+import logging
+import sys
+import os
 from iso_analysis.io import load_eeg_data
 from iso_analysis.analysis import run_iso_analysis
+
+
+def setup_logging(output_folder):
+    os.makedirs(output_folder, exist_ok=True)
+    log_file = os.path.join(output_folder, 'analysis.log')
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file, mode='w'),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+
 
 def main():
     base_data_path = './data'

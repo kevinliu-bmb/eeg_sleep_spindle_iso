@@ -1,5 +1,7 @@
 import os
+import logging
 from datetime import datetime
+from tqdm import tqdm
 import numpy as np
 import pandas as pd
 from itertools import groupby
@@ -8,7 +10,7 @@ from scipy.stats import mode
 from scipy.interpolate import interp1d
 from mne.time_frequency import psd_array_multitaper
 from iso_analysis.io import load_custom_montage
-from iso_analysis.plotting import (
+from iso_analysis.visualization import (
     plot_iso_single_subject_save,
     plot_iso_topomap,
     plot_group_iso_ci
@@ -157,7 +159,7 @@ def get_iso(edf, sleep_stages, artifact_indicator, ch_groups):
 
         # Explicit handling if no valid epochs found
         if len(spec_isos) == 0:
-            print(f"No valid epochs for channel {ch_groups[chi]}. Returning NaN.")
+            logging.info(f"No valid epochs for channel {ch_groups[chi]}. Returning NaN.")
             spec_iso_ch = np.full((1, len(freq_iso)), np.nan)
         else:
             spec_iso_ch = np.nanmean(np.array(spec_isos), axis=0)
@@ -202,7 +204,17 @@ def run_iso_analysis(
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_folder = os.path.join(output_base_path, f"iso_results_{timestamp}")
     os.makedirs(output_folder, exist_ok=True)
-    print(f"Results saved to: {output_folder}")
+
+    # Create organized subdirectories explicitly
+    spectra_dir = os.path.join(output_folder, "spectra")
+    topomaps_dir = os.path.join(output_folder, "topomaps")
+    group_plot_dir = os.path.join(output_folder, "group_plots")
+
+    os.makedirs(spectra_dir, exist_ok=True)
+    os.makedirs(topomaps_dir, exist_ok=True)
+    os.makedirs(group_plot_dir, exist_ok=True)
+
+    logging.info(f"Results will be saved to: {output_folder}")
 
     iso_results = []
     additional_metrics = []
@@ -211,9 +223,7 @@ def run_iso_analysis(
     for idx, subject in enumerate(data_list):
         subject_id = subject["subject_id"]
         group = subject["group"]
-        print(
-            f"\n[{idx+1}/{len(data_list)}] Processing subject: {subject_id} ({group})"
-        )
+        logging.info(f"\n[{idx+1}/{len(data_list)}] Processing subject: {subject_id} ({group})")
 
         try:
             edf_raw = subject["edf"].copy().load_data()
@@ -244,21 +254,21 @@ def run_iso_analysis(
                     iso_dict[col_label] = spec_iso[ch_idx, 0, f_idx]
             iso_results.append(iso_dict)
 
-            # ISO spectrum plot explicitly saved
+            # ISO spectrum plot explicitly saved in spectra_dir
             iso_df_single_subject = pd.DataFrame({"frequency": freq_iso})
             for ch_idx, ch_name in enumerate(edf_raw.ch_names):
                 iso_df_single_subject[f"{ch_name}_sigma_all"] = spec_iso[ch_idx, 0, :]
 
             spectrum_plot_path = os.path.join(
-                output_folder, f"{subject_id}_iso_spectrum.png"
+                spectra_dir, f"{subject_id}_iso_spectrum.png"
             )
             plot_iso_single_subject_save(
                 iso_df_single_subject, subject_id, spectrum_plot_path
             )
 
-            # ISO topomap explicitly saved
+            # ISO topomap explicitly saved in topomaps_dir
             topomap_plot_path = os.path.join(
-                output_folder, f"{subject_id}_iso_topomaps.png"
+                topomaps_dir, f"{subject_id}_iso_topomaps.png"
             )
             plot_iso_topomap(
                 edf_raw, spec_iso, freq_iso, subject_id, montage_path, topomap_plot_path
@@ -274,32 +284,27 @@ def run_iso_analysis(
                 auc_band_power = np.trapz(iso_power[iso_band], freq_iso[iso_band])
                 peak_freq = freq_iso[np.argmax(iso_power)]
 
-                band_power_dict[f"{ch_name}_ISO_bandpower_0.005-0.03Hz"] = (
-                    auc_band_power
-                )
+                band_power_dict[f"{ch_name}_ISO_bandpower_0.005-0.03Hz"] = auc_band_power
                 peak_freq_dict[f"{ch_name}_ISO_peak_frequency"] = peak_freq
 
             additional_metrics.append({**band_power_dict, **peak_freq_dict})
 
         except Exception as e:
-            print(f"Error processing subject {subject_id}: {e}")
+            logging.info(f"Error processing subject {subject_id}: {e}")
 
-    # Save ISO results
+    # Save ISO results explicitly
     iso_results_df = pd.DataFrame(iso_results)
     iso_results_csv = os.path.join(output_folder, "iso_analysis_all_subjects.csv")
     iso_results_df.to_csv(iso_results_csv, index=False)
-    print(f"\nISO spectra saved: {iso_results_csv}")
+    logging.info(f"\nISO spectra results saved: {iso_results_csv}")
 
-    # Save additional metrics
+    # Save additional metrics explicitly
     additional_metrics_df = pd.DataFrame(additional_metrics)
     metrics_csv = os.path.join(output_folder, "iso_additional_metrics.csv")
     additional_metrics_df.to_csv(metrics_csv, index=False)
-    print(f"Additional ISO metrics saved: {metrics_csv}")
+    logging.info(f"Additional ISO metrics saved: {metrics_csv}")
 
-    # Generate group-wise ISO plots
-    group_plot_dir = os.path.join(output_folder, "group_plots")
-    os.makedirs(group_plot_dir, exist_ok=True)
-
+    # Generate and explicitly save group-wise ISO plots
     for channel in edf_raw.ch_names:
         group_plot_path = os.path.join(group_plot_dir, f"ISO_CI_{channel}.png")
         plot_group_iso_ci(iso_results_df, freq_iso, channel, save_path=group_plot_path)
