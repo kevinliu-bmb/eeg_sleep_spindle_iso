@@ -76,3 +76,6 @@ deprecated/
 
 # Output directories (ignore contents, keep directory)
 outputs/*
+
+# Temporary files
+*.txt
