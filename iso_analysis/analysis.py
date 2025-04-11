@@ -289,7 +289,19 @@ def run_iso_analysis(
                 band_power_dict[f"{ch_name}_ISO_bandpower_0.005-0.03Hz"] = auc_band_power
                 peak_freq_dict[f"{ch_name}_ISO_peak_frequency"] = peak_freq
 
-            additional_metrics.append({**band_power_dict, **peak_freq_dict})
+            # Relative ISO Band Power Calculation
+            relative_iso_band_dict = {"subject_id": subject_id, "group": group}
+            iso_total_band = (freq_iso >= 0.001) & (freq_iso <= 0.1)
+            iso_specific_band = (freq_iso >= 0.005) & (freq_iso <= 0.03)
+
+            for ch_idx, ch_name in enumerate(edf_raw.ch_names):
+                iso_power = spec_iso[ch_idx, 0, :]
+                total_auc_power = np.trapz(iso_power[iso_total_band], freq_iso[iso_total_band])
+                specific_auc_power = np.trapz(iso_power[iso_specific_band], freq_iso[iso_specific_band])
+                relative_iso_power = (specific_auc_power / total_auc_power) * 100 if total_auc_power != 0 else np.nan
+                relative_iso_band_dict[f"{ch_name}_relative_ISO_power_0.005-0.03Hz"] = relative_iso_power
+
+            additional_metrics.append({**band_power_dict, **peak_freq_dict, **relative_iso_band_dict})
 
         except Exception as e:
             tqdm.write(f"Error processing subject {subject_id}: {e}")
