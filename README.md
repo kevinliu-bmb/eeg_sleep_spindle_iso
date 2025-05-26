@@ -1,11 +1,11 @@
-# EEG Infraslow Oscillation (ISO) Analysis Pipeline
+# EEG Infraslow Oscillation (ISO) Analysis Pipeline for Altered Sleep Spindle and Infraslow Oscillation in Children with Autism Spectrum Disorder
 
 This project provides a structured pipeline for analyzing infraslow oscillations (ISO) in EEG recordings obtained during Non-REM (NREM) sleep. The analysis focuses on characterizing the ISO spectrum, computing relevant metrics (ISO band power and peak frequencies), and visualizing results with spectral and topographical plots. This pipeline was developed to analyze EEG data in Autism Spectrum Disorder (ASD) and Typically Developing (TD) participant groups.
 
 ## Project Structure
 
 ```{txt}
-mgh_eeg_spindle/
+eeg_sleep_spindle_iso/
 ├── iso_analysis/
 │   ├── __init__.py
 │   ├── analysis.py            # ISO analysis pipeline
@@ -48,8 +48,8 @@ mgh_eeg_spindle/
 Clone the Repository
 
 ```{bash}
-git clone https://github.com/kevinliu-bmb/mgh_eeg_spindle
-cd mgh_eeg_spindle
+git clone https://github.com/kevinliu-bmb/eeg_sleep_spindle_iso
+cd eeg_sleep_spindle_iso
 ```
 
 ## Install Dependencies
