@@ -1,6 +1,6 @@
-# EEG Infraslow Oscillation (ISO) Analysis Pipeline for Altered Sleep Spindle and Infraslow Oscillation in Children with Autism Spectrum Disorder
+# High-Density Electroencephalographic Study of Sleep Spindle and Infraslow Oscillation in Children with Autism Spectrum Disorder
 
-This project provides a structured pipeline for analyzing infraslow oscillations (ISO) in EEG recordings obtained during Non-REM (NREM) sleep. The analysis focuses on characterizing the ISO spectrum, computing relevant metrics (ISO band power and peak frequencies), and visualizing results with spectral and topographical plots. This pipeline was developed to analyze EEG data in Autism Spectrum Disorder (ASD) and Typically Developing (TD) participant groups.
+This project provides a structured pipeline for analyzing infraslow oscillations (ISO) in EEG recordings obtained during Non-REM (NREM) sleep. The analysis focuses on characterizing the ISO spectrum, computing relevant metrics (ISO band power and peak frequencies), and visualizing results with spectral and topographical plots. This pipeline was developed to analyze EEG data in Autism Spectrum Disorder (ASD) and Typically Developing (TD) participant groups used in the manuscript "High-Density Electroencephalographic Study of Sleep Spindle and Infraslow Oscillation in Children with Autism Spectrum Disorder."
 
 ## Project Structure
 
@@ -40,7 +40,13 @@ eeg_sleep_spindle_iso/
 ├── .gitignore
 ├── requirements.txt
 ├── main.py                    # Main executable script
-└── README.md                  # Project documentation
+├── README.md                  # Project documentation
+└── rstats/                    # R statistics and plotting scripts
+    ├── data/
+    ├── main_statistics.Rmd    # Main statistics R Markdown file
+    ├── mne_plots_out/         # MNE plots output directory
+    ├── plot_topomaps.ipynb    # Jupyter notebook for topographical plots
+    └── results_csv_out/       # Directory for results CSV files
 ```
 
 ## Installation
@@ -127,7 +133,7 @@ The pipeline involves the following key steps:
  2. Preprocessing: EEG data is segmented, sleep stage labels applied, and artifact epochs identified.
  3. ISO Analysis:
     1. Computation of ISO spectrum using Multitaper PSD estimation.
-    2. Calculation of ISO band power (0.005–0.03 Hz) and ISO peak frequency.
+    2. Calculation of ISO band power (0.005-0.03 Hz) and ISO peak frequency.
  4. Visualization:
     1. Spectral plots for individual subjects.
     2. Topographical plots of ISO metrics (band power & peak frequency).
@@ -141,10 +147,6 @@ The pipeline involves the following key steps:
 - iso_analysis/plotting.py: Visualization functions for spectral and topographical plots.
 - iso_analysis/utils.py: Utility functions supporting analysis and plotting.
 - main.py: Entrypoint script for the analysis pipeline.
-
-## Contributing
-
-Please submit pull requests for new features, bug fixes, or improvements. Include clear commit messages and update documentation when necessary.
 
 ## Authors
 
