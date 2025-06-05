@@ -79,3 +79,8 @@ outputs/*
 
 # Temporary files
 *.txt
+
+# R statistics data files
+rstats/data/*
+rstats/mne_plots_out/*
+rstats/results_csv_out/*

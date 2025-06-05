@@ -1,0 +1,839 @@
+---
+title: "EEG Spindle Statistical Analysis"
+author: "Kevin Liu"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document: 
+    toc: true
+    fig_caption: true
+    number_sections: true
+    keep_tex: true
+  html_document: 
+    toc: true
+    number_sections: true
+    keep_md: true
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(ggpubr)
+library(ggtext)
+library(egg)
+library(broom)
+library(tableone)
+library(Hmisc)
+library(gtsummary)
+library(flextable)
+library(emmeans)
+library(lemon)
+library(patchwork)
+library(kableExtra)
+library(viridis)
+
+knitr::opts_chunk$set(echo = FALSE)
+theme_set(theme_article())
+options(scipen = 999)
+Sys.setenv(VROOM_CONNECTION_SIZE = 5000000)
+```
+
+```{r load_tidy_data, message=FALSE, include=FALSE}
+# === Load Raw Datasets ===
+
+# Load main ISO spectral power metrics and clean subject IDs and group labels
+iso_main_raw = read_csv("data/iso_metrics_main_raw.csv") %>%
+  mutate(
+    subject_id = str_extract(subject_id, "^\\d+"),
+    group = factor(group, levels = c("HC", "ASD"))
+  )
+
+# Load additional ISO band power, relative power, and peak frequency metrics
+iso_add_raw = read_csv("data/iso_metrics_additional_raw.csv") %>%
+  mutate(
+    subject_id = str_extract(subject_id, "^\\d+"),
+    group = factor(group, levels = c("HC", "ASD"))
+  )
+
+# Load participant demographics and clean subject IDs, group, and sex
+demo_raw = read_csv("data/demographics_raw.csv") %>%
+  mutate(
+    subject_id = str_extract(subject_id, "^\\d+"),
+    group = factor(group, levels = c("HC", "ASD")),
+    sex = factor(sex, levels = c("M", "F"))
+  )
+
+# Load raw spindle features and clean subject IDs and group labels
+spindle_raw = read_csv("data/spindle_features_raw.csv") %>%
+  mutate(
+    subject_id = str_extract(subject_id, "^\\d+"),
+    group = factor(group, levels = c("HC", "ASD"))
+  )
+
+# === Identify Subjects to Include ===
+
+# Find subject IDs that are common across all datasets
+sid_common = Reduce(intersect, list(
+  iso_main_raw$subject_id,
+  iso_add_raw$subject_id,
+  demo_raw$subject_id,
+  spindle_raw$subject_id
+))
+
+# Identify subject IDs with >50% missing values in ISO main data
+sid_high_missingness = iso_main_raw$subject_id[
+  rowMeans(is.na(iso_main_raw)) > 0.5
+]
+
+# Identify subjects with 64-channel EEG setups using non-NA flag in ISO additional data
+# sid_64ch = iso_main_raw$subject_id[
+#   !is.na(iso_add_raw$`EEG 64_ISO_peak_frequency`)
+# ]
+
+# Identify subjects with >15% missing values in spindle feature data (likely poor EEG quality)
+sid_spindle_high_missing = spindle_raw$subject_id[
+  rowMeans(is.na(spindle_raw)) > 0.15
+]
+
+# === Filter Datasets to Retain Only Clean, Valid Participants ===
+
+# Filter demographics to include only valid subjects
+demo = demo_raw %>%
+  filter(
+    subject_id %in% sid_common,
+    # !subject_id %in% sid_64ch,
+    !subject_id %in% sid_high_missingness,
+    !subject_id %in% sid_spindle_high_missing
+  )
+
+# Filter ISO datasets to match filtered subject list and drop all-NA columns
+iso_main = iso_main_raw %>%
+  filter(subject_id %in% demo$subject_id) %>%
+  select(where(~ !all(is.na(.))))
+
+iso_add = iso_add_raw %>%
+  filter(subject_id %in% demo$subject_id) %>%
+  select(where(~ !all(is.na(.))))
+
+# Filter spindle data similarly
+spindle = spindle_raw %>%
+  filter(subject_id %in% demo$subject_id) %>%
+  select(where(~ !all(is.na(.))))
+
+# === Clean and Impute Spindle Data ===
+
+# Create regex to match only valid spindle features (SP or SO metrics for valid channels)
+valid_channels = c(
+  "Fp1", "Fp2", "F3", "F4", "C3", "C4", "P3", "P4", "O1", "O2",
+  "F7", "F8", "T7", "T8", "P7", "P8", "Fz", "Pz", "Oz",
+  "above_M1", "above_M2", "between_P7_T7", "between_P8_T8",
+  "between_P7_O1", "between_P8_O2", "between_nasion_Fz", "between_Cz_Fz"
+)
+channel_pattern = paste0("(", paste(valid_channels, collapse = "|"), ")")
+
+# Remove spindle features with >20% missingness across subjects
+# Then impute remaining missing values using the group-specific median
+# Then filter columns to include only those without "fast" or "slow"
+spindle_imp = spindle[, colMeans(is.na(spindle)) <= 0.2] %>%
+  group_by(group) %>%
+  mutate(across(where(is.numeric), ~ ifelse(is.na(.), median(., na.rm = TRUE), .))) %>%
+  ungroup() %>%
+  select(-contains("_fast_"), -contains("_slow_"))
+
+# === Cleanup: Remove Unused Objects to Free Memory ===
+rm(
+  iso_main_raw,
+  iso_add_raw,
+  demo_raw,
+  spindle_raw,
+  sid_common,
+  sid_high_missingness,
+  # sid_64ch,
+  sid_spindle_high_missing,
+  channel_pattern
+)
+```
+
+\newpage
+
+# ISO Spectral Plots
+
+## ISO Spectral Power Across Frequencies
+
+```{r plot_iso_pwr_summarized}
+# === Reshape ISO main data into long format for frequency-wise analysis ===
+iso_main_long = iso_main %>%
+  inner_join(demo %>% select(subject_id, group, sex, age), by = c("subject_id", "group")) %>%
+  pivot_longer(
+    cols = matches("^EEG \\d+_sigma_all_\\d+\\.\\d+Hz$"),
+    names_to = c("channel", "frequency"),
+    names_pattern = "^EEG (\\d+)_sigma_all_(\\d+\\.\\d+)Hz$",
+    values_to = "iso_power"
+  ) %>%
+  mutate(frequency = as.numeric(frequency))
+
+# === Bootstrap CI function for mean estimates ===
+set.seed(123)
+bootstrap_ci = function(x, n_boot = 1000, ci = 0.95) {
+  boot_means = replicate(n_boot, mean(sample(x, replace = TRUE)))
+  quantile(boot_means, probs = c((1 - ci)/2, 1 - (1 - ci)/2))
+}
+
+# === Summarize by group and sex ===
+iso_summary_sex = iso_main_long %>%
+  group_by(group, sex, frequency) %>%
+  dplyr::summarize(
+    mean_ISO = mean(iso_power),
+    CI_lower = bootstrap_ci(iso_power)[1],
+    CI_upper = bootstrap_ci(iso_power)[2],
+    .groups = "drop"
+  ) %>%
+  mutate(
+    plot_type = "By Group & Sex",
+    group_sex = interaction(group, sex)
+  )
+
+# === Summarize by group only ===
+iso_summary_group = iso_main_long %>%
+  group_by(group, frequency) %>%
+  dplyr::summarize(
+    mean_ISO = mean(iso_power),
+    CI_lower = bootstrap_ci(iso_power)[1],
+    CI_upper = bootstrap_ci(iso_power)[2],
+    .groups = "drop"
+  ) %>%
+  mutate(
+    plot_type = "By Group Only",
+    group_sex = group
+  )
+
+# === Combine summaries for plotting ===
+iso_summary_combined = bind_rows(iso_summary_group, iso_summary_sex)
+
+colors_group = viridis(2)
+colors_group_sex = viridis(4)
+
+# === Plot spectral power across frequencies with CIs ===
+ggplot(iso_summary_combined, aes(x = frequency, y = mean_ISO, color = group_sex, fill = group_sex)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = CI_lower, ymax = CI_upper), alpha = 0.25, color = NA) +
+  facet_wrap(~plot_type, ncol = 1) +
+  scale_color_manual(values = c(colors_group, colors_group_sex),
+                     labels = c("TD", "ASD", "TD Male", "ASD Male", "TD Female", "ASD Female")) +
+  scale_fill_manual(values = c(colors_group, colors_group_sex),
+                    labels = c("TD", "ASD", "TD Male", "ASD Male", "TD Female", "ASD Female")) +
+  labs(
+    x = "Frequency (Hz)",
+    y = "ISO Spectral Power (dB)",
+    color = "Sex/Group",
+    fill = "Sex/Group"
+  ) +
+  theme(
+    aspect.ratio = 0.5,
+    panel.grid.major = element_line(color = "grey80", linetype = "dotted")
+  ) +
+  scale_x_continuous(breaks = seq(0, 0.1, by = 0.01))
+
+# === Remove intermediate objects to free memory ===
+rm(iso_summary_group, iso_summary_sex, bootstrap_ci)
+```
+
+\newpage
+
+## ISO Spectral Power Minimum Age Plot
+
+```{r plot_iso_pwr_min_age, fig.width=8, fig.height=6, dpi=600}
+min_age_sid = c("12361287", "12315596", "11957179", "11750225", "11594675")
+
+iso_main_long %>% 
+  filter(subject_id %in% min_age_sid) %>%
+  ggplot(aes(x = frequency, y = iso_power, color = channel)) +
+  geom_line(alpha = 0.5) +
+  facet_rep_wrap(~subject_id, ncol = 2, scales = "fixed", repeat.tick.labels = TRUE) +
+  scale_color_viridis_d() +
+  scale_x_continuous(breaks = seq(from = 0, to = 0.1, by = 0.01)) +
+  labs(
+    x = "Frequency (Hz)",
+    y = "ISO Spectral Power (dB)",
+    color = "Channel"
+    ) +
+  theme(
+    aspect.ratio = 0.5,
+    panel.grid.major = element_line(color = "grey80", linetype = "dotted"),
+    legend.position = "none",
+    axis.text.x = element_text(size = 8),
+    axis.ticks.x = element_line()
+  )
+
+demo %>% 
+  filter(subject_id %in% min_age_sid) %>% 
+  select(subject_id, sex, age, group) %>% 
+  kbl() %>% 
+  kable_classic(full_width = FALSE, html_font = "Arial")
+```
+
+\newpage
+
+# ANCOVA Analysis
+
+```{r eff_comp_func}
+effective_comparisons = function(data_matrix, threshold = 0.99) {
+  pca = prcomp(data_matrix, scale. = TRUE)
+  cum_var = cumsum(pca$sdev^2) / sum(pca$sdev^2)
+  min(which(cum_var >= threshold))
+}
+```
+
+## Relative ISO Power Analysis
+
+```{r iso_pwr_tidy_long}
+# === Tidy Relative ISO Power Data ===
+
+# Create a mapping from EEG code to 10–20 channel names
+channel_map = c(
+  "EEG 1" = "Fp1", "EEG 2" = "Fp2", "EEG 3" = "F3", "EEG 4" = "F4",
+  "EEG 5" = "C3", "EEG 6" = "C4", "EEG 7" = "P3", "EEG 8" = "P4",
+  "EEG 9" = "O1", "EEG 10" = "O2", "EEG 11" = "F7", "EEG 12" = "F8",
+  "EEG 13" = "T7", "EEG 14" = "T8", "EEG 15" = "P7", "EEG 16" = "P8",
+  "EEG 17" = "Fz", "EEG 18" = NA, "EEG 19" = "Pz", "EEG 20" = "Oz",
+  "EEG 21" = "above_M1", "EEG 22" = "above_M2",
+  "EEG 23" = "between_P7_T7", "EEG 24" = "between_P8_T8",
+  "EEG 25" = "between_P7_O1", "EEG 26" = "between_P8_O2",
+  "EEG 27" = "between_nasion_Fz", "EEG 28" = "between_Cz_Fz",
+  "EEG 29" = NA, "EEG 30" = NA, "EEG 31" = NA, "EEG 32" = NA
+)
+
+# Reshape ISO relative power data to long format and merge with demographic information
+iso_long = iso_add %>%
+  select(subject_id, group, matches("_relative_ISO_power_0\\.005-0\\.03Hz")) %>%
+  pivot_longer(
+    cols = matches("_relative_ISO_power_0\\.005-0\\.03Hz"),
+    names_to = "channel",
+    names_pattern = "(EEG \\d+)_relative_ISO_power_0\\.005-0\\.03Hz",
+    values_to = "relative_iso_power"
+  ) %>%
+  inner_join(demo %>% select(subject_id, sex, age), by = "subject_id") %>%
+  mutate(
+    group = factor(group, levels = c("HC", "ASD")),
+    sex = factor(sex, levels = c("M", "F")),
+    channel = factor(channel)
+  ) %>%
+  mutate(
+    channel_1020 = recode(channel, !!!channel_map)
+  ) %>%
+  filter(!is.na(channel_1020)) %>%
+  mutate(channel = factor(channel_1020)) %>%
+  select(-channel_1020)
+
+# === Construct feature matrix and compute PCA-based Bonferroni correction ===
+
+iso_matrix = iso_long %>%
+  pivot_wider(names_from = channel, values_from = relative_iso_power) %>%
+  select(-subject_id, -group, -age, -sex) %>%
+  drop_na() %>%
+  as.matrix()
+
+N_iso = effective_comparisons(iso_matrix)
+bonf_iso = 0.05 / N_iso
+
+cat(sprintf("Effective number of comparisons (N_iso): %d\nBonferroni-corrected threshold (bonf_iso): %.6f\n", 
+            N_iso, bonf_iso))
+```
+
+### relative_iso_power ~ group + sex + age + group:sex, group by sex interaction
+
+```{r iso_pwr_group_by_sex, echo=TRUE}
+# === Run ANCOVA to test for group-by-sex interaction on relative ISO power ===
+
+r_iso_pwr_group_by_sex = iso_long %>%
+  group_by(channel) %>%
+  do(tidy(lm(relative_iso_power ~ group + sex + age + group:sex, data = .))) %>%
+  ungroup() %>%
+  filter(term == "groupASD:sexF") %>%
+  mutate(signif_bonf = p.value < bonf_iso) %>%
+  arrange(p.value)
+
+r_iso_pwr_group_by_sex %>% 
+  head(10) %>% 
+  kbl() %>% 
+  kable_classic(full_width = FALSE, html_font = "Arial")
+
+r_iso_pwr_group_by_sex %>% 
+  write_csv("results_csv_out/ancova_iso_pwr_group_by_sex.csv")
+```
+
+\newpage
+
+### relative_iso_power ~ group + age + sex, main groupwise effects
+
+```{r iso_pwr_main_eff, echo=TRUE}
+# === Estimate main effect of group (ASD vs. HC), controlling for age and sex ===
+
+r_iso_pwr_main_eff = iso_long %>%
+  group_by(channel) %>%
+  do(tidy(lm(relative_iso_power ~ group + age + sex, data = .))) %>%
+  ungroup() %>%
+  filter(term == "groupASD") %>% 
+  mutate(signif_bonf = p.value < bonf_iso) %>%
+  arrange(p.value)
+
+r_iso_pwr_main_eff %>% 
+  head(10) %>% 
+  kbl() %>% 
+  kable_classic(full_width = FALSE, html_font = "Arial")
+
+r_iso_pwr_main_eff %>% 
+  write_csv("results_csv_out/ancova_iso_main_effects.csv")
+```
+
+\newpage
+
+### relative_iso_power ~ group + age + sex, effect of age
+
+```{r iso_pwr_age_eff, echo=TRUE}
+# === Estimate the effect of age on relative ISO power across channels ===
+
+r_iso_pwr_age_eff = iso_long %>%
+  group_by(channel) %>%
+  do(tidy(lm(relative_iso_power ~ group + age + sex, data = .))) %>%
+  ungroup() %>%
+  filter(term == "age") %>%
+  mutate(signif_bonf = p.value < bonf_iso) %>% 
+  arrange(p.value)
+
+r_iso_pwr_age_eff %>% 
+  head(10) %>% 
+  kbl() %>% 
+  kable_classic(full_width = FALSE, html_font = "Arial")
+
+r_iso_pwr_age_eff %>% 
+  write_csv("results_csv_out/ancova_iso_age_effects.csv")
+```
+
+\newpage
+
+## Spindle Feature Analysis
+
+```{r spindle_tidy_long}
+# Build a regex pattern to extract channel names from feature strings
+channel_pattern = paste0("(", paste(valid_channels, collapse = "|"), ")$")
+
+# Reshape spindle data to long format and extract feature metadata
+spindle_long = spindle_imp %>%
+  pivot_longer(
+    cols = matches("^(SP|SO)_"),
+    names_to = "FullMetric",
+    values_to = "Value"
+  ) %>%
+  mutate(
+    # Extract channel name
+    Channel = str_extract(FullMetric, channel_pattern),
+
+    # Identify metric group (SP or SO)
+    MetricGroup = str_extract(FullMetric, "^(SP|SO)"),
+
+    # Remove prefix and suffix to isolate metric name
+    Metric = FullMetric %>%
+      str_remove("^(SP|SO)_") %>%
+      str_remove(paste0("_", Channel, "$")),
+
+    # Identify spindle subtype (only "all" should be present at this point)
+    SpindleType = if_else(
+      MetricGroup == "SP" & str_detect(Metric, "_(all)$"),
+      str_extract(Metric, "all"),
+      NA_character_
+    ),
+
+    # Final cleanup of metric name (remove "_all" if present)
+    Metric = str_remove(Metric, "_all$")
+  ) %>%
+  # Join subject demographics
+  inner_join(demo %>% select(subject_id, group, sex, age), by = c("subject_id", "group")) %>%
+  # Ensure correct factor levels and select relevant columns
+  mutate(
+    group = factor(group, levels = c("HC", "ASD")),
+    sex = factor(sex, levels = c("M", "F")),
+    Channel = factor(Channel, levels = valid_channels)
+  ) %>%
+  select(subject_id, group, MetricGroup, Metric, SpindleType, Channel, Value, sex, age)
+
+spindle_matrix = spindle_imp %>%
+  select(matches("^(SP|SO)_")) %>%
+  drop_na() %>%
+  as.matrix()
+
+# Calculate effective number of comparisons
+spindle_N = effective_comparisons(spindle_matrix)
+
+# Set PCA-based Bonferroni threshold
+spindle_bonf = 0.05 / spindle_N
+
+cat(sprintf("Effective number of comparisons (spindle_N): %d\nBonferroni-corrected threshold (spindle_bonf): %.6f\n", 
+            spindle_N, spindle_bonf))
+```
+
+### spindle feature ~ group + sex + age + group:sex, group by sex interaction
+
+```{r spindle_group_by_sex, echo=TRUE}
+r_spindle_group_by_sex = spindle_long %>%
+  group_by(MetricGroup, Metric, SpindleType, Channel) %>%
+  do(tidy(lm(Value ~ group + sex + age + group:sex, data = .))) %>%
+  ungroup() %>%
+  filter(term == "groupASD:sexF") %>% 
+  unite("feature_name", MetricGroup, Metric, SpindleType, Channel) %>% 
+  mutate(signif_bonf = p.value < spindle_bonf) %>% 
+  arrange(p.value)
+
+r_spindle_group_by_sex %>% 
+  head(10) %>% 
+  kbl() %>% 
+  kable_classic(full_width = FALSE, html_font = "Arial")
+
+r_spindle_group_by_sex %>% 
+  write_csv("results_csv_out/ancova_spindle_group_by_sex.csv")
+```
+
+\newpage
+
+### spindle feature ~ group + age + sex, main groupwise effects
+
+```{r spindle_main_eff, echo=TRUE}
+r_spindle_main_eff = spindle_long %>%
+  group_by(MetricGroup, Metric, SpindleType, Channel) %>%
+  do(tidy(lm(Value ~ group + age + sex, data = .))) %>%
+  ungroup() %>%
+  filter(term == "groupASD") %>% 
+  unite("feature_name", MetricGroup, Metric, SpindleType, Channel) %>% 
+  mutate(signif_bonf = p.value < spindle_bonf) %>% 
+  arrange(p.value)
+
+r_spindle_main_eff %>% 
+  head(10) %>% 
+  kbl() %>% 
+  kable_classic(full_width = FALSE, html_font = "Arial")
+
+r_spindle_main_eff %>% 
+  write_csv("results_csv_out/ancova_spindle_main_effects.csv")
+```
+
+\newpage
+
+### spindle feature ~ group + age + sex, effect of age
+
+```{r spindle_age_eff, echo=TRUE}
+r_spindle_age_eff = spindle_long %>%
+  group_by(MetricGroup, Metric, SpindleType, Channel) %>%
+  do(tidy(lm(Value ~ group + age + sex, data = .))) %>%
+  ungroup() %>%
+  filter(term == "age") %>% 
+  unite("feature_name", MetricGroup, Metric, SpindleType, Channel) %>% 
+  mutate(signif_bonf = p.value < spindle_bonf) %>% 
+  arrange(p.value)
+
+r_spindle_age_eff %>% 
+  head(10) %>% 
+  kbl() %>% 
+  kable_classic(full_width = FALSE, html_font = "Arial")
+
+r_spindle_age_eff %>% 
+  write_csv("results_csv_out/ancova_spindle_age_effects.csv")
+
+# Remove NA values before reversing the map
+channel_map_clean = channel_map[!is.na(channel_map)]
+
+# Reverse the cleaned map: names become values, values become names
+channel_map_rev = setNames(names(channel_map_clean), channel_map_clean)
+
+r_spindle_age_eff %>%
+  filter(str_detect(feature_name, "^SP_ISA_S_all_")) %>%
+  mutate(
+    Channel = str_remove(feature_name, "^SP_ISA_S_all_"),
+    Significant = signif_bonf
+  ) %>%
+  select(Channel, estimate, p.value, Significant) %>%
+  mutate(EEG_label = recode(Channel, !!!channel_map_rev)) %>% 
+  write_csv("results_csv_out/SP_ISA_S_all_viz.csv")
+
+r_spindle_age_eff %>%
+  filter(str_detect(feature_name, "^SP_FFT_all_")) %>%
+  mutate(
+    Channel = str_remove(feature_name, "^SP_FFT_all_"),
+    Significant = signif_bonf
+  ) %>%
+  select(Channel, estimate, p.value, Significant) %>%
+  mutate(EEG_label = recode(Channel, !!!channel_map_rev)) %>% 
+  write_csv("results_csv_out/SP_FFT_all_viz.csv")
+
+r_spindle_age_eff %>%
+  filter(str_detect(feature_name, "^SP_DENS_all_")) %>%
+  mutate(
+    Channel = str_remove(feature_name, "^SP_DENS_all_"),
+    Significant = signif_bonf
+  ) %>%
+  select(Channel, estimate, p.value, Significant) %>%
+  mutate(EEG_label = recode(Channel, !!!channel_map_rev)) %>% 
+  write_csv("results_csv_out/SP_DENS_all_viz.csv")
+```
+
+```{r make_num_ch_spindle_data}
+# Define the forward channel map
+channel_to_eegnum = c(
+  "Fp1" = "EEG 1",  "Fp2" = "EEG 2",  "F3" = "EEG 3",   "F4" = "EEG 4",
+  "C3" = "EEG 5",   "C4" = "EEG 6",   "P3" = "EEG 7",   "P4" = "EEG 8",
+  "O1" = "EEG 9",   "O2" = "EEG 10",  "F7" = "EEG 11",  "F8" = "EEG 12",
+  "T7" = "EEG 13",  "T8" = "EEG 14",  "P7" = "EEG 15",  "P8" = "EEG 16",
+  "Fz" = "EEG 17",  "Pz" = "EEG 19",  "Oz" = "EEG 20",
+  "above_M1" = "EEG 21", "above_M2" = "EEG 22",
+  "between_P7_T7" = "EEG 23", "between_P8_T8" = "EEG 24",
+  "between_P7_O1" = "EEG 25", "between_P8_O2" = "EEG 26",
+  "between_nasion_Fz" = "EEG 27", "between_Cz_Fz" = "EEG 28"
+)
+
+spindle %>% 
+  inner_join(demo %>% select(subject_id, group, sex), by = c("subject_id", "group")) %>% 
+  select(subject_id, group, sex, everything()) %>% 
+  pivot_longer(
+    cols = matches("^(SP|SO)_"),
+    names_to = "FullMetric",
+    values_to = "Value"
+  ) %>%
+  mutate(
+    # Extract channel name
+    Channel = str_extract(FullMetric, channel_pattern),
+
+    # Identify metric group (SP or SO)
+    MetricGroup = str_extract(FullMetric, "^(SP|SO)"),
+
+    # Remove prefix and suffix to isolate metric name
+    Metric = FullMetric %>%
+      str_remove("^(SP|SO)_") %>%
+      str_remove(paste0("_", Channel, "$")),
+
+    # Identify spindle subtype (only "all" should be present at this point)
+    SpindleType = if_else(
+      MetricGroup == "SP" & str_detect(Metric, "_(all)$"),
+      str_extract(Metric, "all"),
+      NA_character_
+    ),
+
+    # Final cleanup of metric name (remove "_all" if present)
+    Metric = str_remove(Metric, "_all$")
+  ) %>% 
+  mutate(
+    Channel = recode(Channel, !!!channel_to_eegnum),
+    FullMetric = paste(MetricGroup, Metric, SpindleType, Channel, sep = "_") %>% str_replace("_NA_", "_")
+  ) %>% 
+  select(-Channel, -MetricGroup, -Metric, -SpindleType) %>% 
+  pivot_wider(
+    names_from = FullMetric,
+    values_from = Value
+  ) %>% 
+  write_csv("results_csv_out/spindle_features_num_ch.csv")
+```
+
+\newpage
+
+# Pearson Correlations
+
+## Correlation between ASD severity and select EEG features
+
+```{r corr_plot, fig.width=7, fig.height=6, dpi=600}
+prepare_corr_data = function(sex_label) {
+
+  # Clinical data selection
+  clinical_corr_data = demo %>%
+    filter(group == "ASD", sex == sex_label) %>%
+    select(subject_id, age, CARS, ADOS_total, ADOS_communication, ADOS_interactivity,
+           gesell_adaptive_behavior, gesell_gross_motor, gesell_fine_motor,
+           gesell_language, gesell_personal_social) %>%
+    arrange(subject_id) %>%
+    column_to_rownames("subject_id")
+
+  # EEG feature selection and merging
+  eeg_corr_data = iso_add %>%
+    select(subject_id) %>%
+    inner_join(
+      spindle_imp %>% select(subject_id, SP_R_PHASE_IF_all_F8, SP_ISA_S_all_F4, SP_ISA_S_all_F7),
+      by = "subject_id"
+    ) %>%
+    filter(subject_id %in% row.names(clinical_corr_data)) %>%
+    arrange(subject_id) %>%
+    column_to_rownames("subject_id")
+
+  # Compute correlations explicitly
+  corr_results = rcorr(as.matrix(clinical_corr_data), as.matrix(eeg_corr_data), type = "pearson")
+
+  corr_matrix = corr_results$r[colnames(clinical_corr_data), colnames(eeg_corr_data)]
+  p_matrix = corr_results$P[colnames(clinical_corr_data), colnames(eeg_corr_data)]
+
+  # Tidy up results explicitly
+  corr_df = as.data.frame(as.table(corr_matrix)) %>%
+    rename(Clinical = Var1, EEG = Var2, Correlation = Freq) %>%
+    mutate(
+      p_value = as.vector(p_matrix),
+      log_p = -log10(p_value),
+      Significant = p_value < 0.05,
+      Sex = ifelse(sex_label == "M", "Male", "Female")
+    )
+
+  # Clinical feature labels explicitly
+  clinical_labels = c("Age (years)", "CARS Score", "ADOS Total Score", 
+                       "ADOS Communication", "ADOS Interactivity",
+                       "Gesell Adaptive Behavior", "Gesell Gross Motor",
+                       "Gesell Fine Motor", "Gesell Language", 
+                       "Gesell Personal-Social")
+
+  corr_df$Clinical = factor(corr_df$Clinical, levels = colnames(clinical_corr_data), labels = clinical_labels)
+
+  # Simplify EEG feature labels explicitly
+  corr_df$EEG = factor(corr_df$EEG, levels = c("SP_R_PHASE_IF_all_F8", 
+                                                "SP_ISA_S_all_F4",
+                                               "SP_ISA_S_all_F7"),
+                        labels = c("SO-phase-dependent Spindle \n Frequency Modulation (F8)",
+                                   "Mean ISA per spindle (F4)",
+                                   "Mean ISA per spindle (F7)"))
+
+  return(corr_df)
+}
+
+# Prepare data explicitly by sex
+corr_df_male = prepare_corr_data("M")
+corr_df_female = prepare_corr_data("F")
+
+# Combine male and female datasets explicitly
+corr_df_combined = bind_rows(corr_df_male, corr_df_female)
+
+# Visualization explicitly
+ggplot(corr_df_combined, aes(x = EEG, y = Clinical)) +
+  geom_point(aes(size = log_p, fill = Correlation, color = Significant, stroke = Significant), shape = 21) +
+  geom_text(aes(label = round(Correlation, 2)), size = 2.25) +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0, limits = c(-1, 1), 
+                       name = expression(italic(r))) +
+  scale_size_continuous(name = expression(-log[10](italic(p))), range = c(2, 8)) +
+  scale_color_manual(values = c(`TRUE` = "black", `FALSE` = "grey70"), guide = "none") +
+  scale_discrete_manual(aesthetics = "stroke", values = c(`TRUE` = 0.5, `FALSE` = 0), guide = "none") +
+  facet_wrap(~Sex, ncol = 2) +
+  guides(fill = guide_colorbar(barheight = 4, barwidth = 0.4), size = guide_none()) +
+  labs(x = NULL, y = NULL) +
+  theme(
+    aspect.ratio = 1.25,
+    axis.text.x = element_text(angle = 30, hjust = 1, size = 9),
+    axis.text.y = element_text(size = 9),
+    axis.title.x = element_text(size = 10, face = "bold"),
+    strip.text = element_text(face = "bold", size = 11),
+    panel.spacing = unit(1, "lines")
+  )
+
+corr_df_combined %>%
+  filter(Significant) %>%
+  select(-Significant) %>% 
+  write_csv("results_csv_out/corr_signif_spindle.csv")
+```
+
+\newpage
+
+## Correlation between ASD severity and ISO relative power of each EEG channel
+
+```{r fig.width=12, fig.height=5, dpi=600}
+# === Prepare Clinical Data (Male ASD) ===
+clinical_corr_data_male = demo %>%
+  filter(group == "ASD", sex == "M") %>%
+  select(subject_id, age, CARS, ADOS_total, ADOS_communication, ADOS_interactivity,
+         gesell_adaptive_behavior, gesell_gross_motor, gesell_fine_motor,
+         gesell_language, gesell_personal_social) %>%
+  arrange(subject_id) %>%
+  column_to_rownames("subject_id")
+
+# === Prepare EEG Relative ISO Power Data (Male ASD) ===
+relative_iso_corr_data_male = iso_add %>%
+  filter(subject_id %in% rownames(clinical_corr_data_male)) %>%
+  select(subject_id, matches("_relative_ISO_power_0\\.005-0\\.03Hz$")) %>%
+  arrange(subject_id) %>%
+  column_to_rownames("subject_id")
+
+# === Compute Pearson Correlation ===
+corr_results_male = rcorr(as.matrix(clinical_corr_data_male),
+                          as.matrix(relative_iso_corr_data_male),
+                          type = "pearson")
+
+# === Extract Correlation Coefficients and P-values ===
+corr_matrix_male = corr_results_male$r[colnames(clinical_corr_data_male), 
+                                       colnames(relative_iso_corr_data_male)]
+p_matrix_male = corr_results_male$P[colnames(clinical_corr_data_male), 
+                                    colnames(relative_iso_corr_data_male)]
+
+# === Convert to Tidy Format ===
+corr_df_male = as.data.frame(as.table(corr_matrix_male)) %>%
+  rename(Clinical = Var1, EEG = Var2, Correlation = Freq) %>%
+  mutate(
+    p_value = as.vector(p_matrix_male),
+    log_p = -log10(p_value),
+    Significant = p_value < 0.05
+  )
+
+# === Define Human-Readable Labels ===
+clinical_labels_named = c(
+  age = "Age (years)",
+  CARS = "CARS Score",
+  ADOS_total = "ADOS Total Score",
+  ADOS_communication = "ADOS Communication",
+  ADOS_interactivity = "ADOS Interactivity",
+  gesell_adaptive_behavior = "Gesell Adaptive Behavior",
+  gesell_gross_motor = "Gesell Gross Motor",
+  gesell_fine_motor = "Gesell Fine Motor",
+  gesell_language = "Gesell Language",
+  gesell_personal_social = "Gesell Personal-Social"
+)
+
+eeg_label_map = c(
+  "Fp1" = "Fp1", "Fp2" = "Fp2", "F3" = "F3", "F4" = "F4",
+  "C3" = "C3", "C4" = "C4", "P3" = "P3", "P4" = "P4",
+  "O1" = "O1", "O2" = "O2", "F7" = "F7", "F8" = "F8",
+  "T7" = "T7", "T8" = "T8", "P7" = "P7", "P8" = "P8",
+  "Fz" = "Fz", "Pz" = "Pz", "Oz" = "Oz",
+  "above_M1" = "Above M1", "above_M2" = "Above M2",
+  "between_P7_T7" = "Between P7-T7", "between_P8_T8" = "Between P8-T8",
+  "between_P7_O1" = "Between P7-O1", "between_P8_O2" = "Between P8-O2",
+  "between_nasion_Fz" = "Between Nasion-Fz", "between_Cz_Fz" = "Between Cz-Fz"
+)
+
+# === Apply Clinical and EEG Labels ===
+corr_df_male = corr_df_male %>%
+  mutate(
+    Clinical = recode(Clinical, !!!clinical_labels_named),
+    EEG = str_remove(EEG, "_relative_ISO_power_0\\.005-0\\.03Hz"),
+    Channel_1020 = recode(EEG, !!!channel_map),
+    Channel_Label = recode(Channel_1020, !!!eeg_label_map)
+  ) %>%
+  filter(!is.na(Channel_Label))
+
+# === Plot Correlation Matrix ===
+corr_df_male %>%
+  mutate(EEG = factor(Channel_Label)) %>%
+  select(-Channel_1020, -Channel_Label) %>%
+  ggplot(aes(x = EEG, y = Clinical)) +
+  geom_point(aes(size = log_p, fill = Correlation, color = Significant, stroke = Significant), shape = 21) +
+  geom_text(aes(label = round(Correlation, 2)), size = 2.25) +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0, limits = c(-1, 1), name = expression(italic(r))) +
+  scale_size_continuous(name = expression(-log[10](italic(p))), range = c(2, 8)) +
+  scale_color_manual(values = c(`TRUE` = "black", `FALSE` = "grey70"), guide = "none") +
+  scale_discrete_manual(aesthetics = "stroke", values = c(`TRUE` = 0.5, `FALSE` = 0), guide = "none") +
+  guides(fill = guide_colorbar(barheight = 0.4, barwidth = 5, position = "bottom"), size = "none") +
+  labs(x = "EEG Channels (Relative ISO Band Power)", y = NULL) +
+  theme(
+    aspect.ratio = 0.25,
+    axis.text.x = element_text(angle = 30, hjust = 1, size = 9),
+    axis.text.y = element_text(size = 9),
+    axis.title.x = element_text(size = 9, face = "bold")
+  )
+
+# === Export Significant Correlations ===
+corr_df_male %>%
+  filter(Significant) %>%
+  select(Clinical, Channel_1020, Correlation, p_value, log_p) %>%
+  arrange(Clinical) %>%
+  write_csv("results_csv_out/corr_signif_iso.csv")
+
+corr_df_male %>%
+  select(Clinical, Channel_1020, Correlation, p_value) %>%
+  mutate(Channel_1020 = Channel_1020 %>% str_remove("between_") %>% str_replace("above_", "Above ") %>% str_replace("_", "-") %>% str_replace("^n", "N")) %>%
+  write_csv("results_csv_out/iso_corr_df.csv")
+```
