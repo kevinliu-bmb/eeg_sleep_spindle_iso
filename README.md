@@ -41,12 +41,22 @@ eeg_sleep_spindle_iso/
 ├── requirements.txt
 ├── main.py                    # Main executable script
 ├── README.md                  # Project documentation
-└── rstats/                    # R statistics and plotting scripts
-    ├── data/
-    ├── main_statistics.Rmd    # Main statistics R Markdown file
-    ├── mne_plots_out/         # MNE plots output directory
-    ├── plot_topomaps.ipynb    # Jupyter notebook for topographical plots
-    └── results_csv_out/       # Directory for results CSV files
+├── rstats/                    # R statistics and plotting scripts
+│   ├── data/
+│   ├── main_statistics.Rmd    # Main statistics R Markdown file
+│   ├── mne_plots_out/         # MNE plots output directory
+│   ├── plot_topomaps.ipynb    # Jupyter notebook for topographical plots
+│   └── results_csv_out/       # Directory for results CSV files
+└── sleep_spindle_analyses/    # Sleep spindle analysis scripts
+    ├── change_64ch_to_32ch.py
+    ├── get_artifacts.py
+    ├── get_sleep_stages.py
+    ├── step1_get_mastersheet.py
+    ├── step2_detect_sp_so.py
+    ├── step2b_choose_sp_q.py
+    ├── step3_compute_features.py
+    ├── step4_compare_features.py
+    └── step5_compute_corr.py
 ```
 
 ## Installation
@@ -150,7 +160,7 @@ The pipeline involves the following key steps:
 
 ## Authors
 
-- Kevin Liu (<kevin.liu2@childrens.harvard.edu>)
+- Kevin Liu (<kliu16@mgh.harvard.edu>)
 - Haoqi Sun (<hsun3@bidmc.harvard.edu>)
 
 ## License

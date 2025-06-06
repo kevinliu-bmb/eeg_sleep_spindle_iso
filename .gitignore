@@ -84,3 +84,4 @@ outputs/*
 rstats/data/*
 rstats/mne_plots_out/*
 rstats/results_csv_out/*
+sleep_spindle_analyses/*.csv
