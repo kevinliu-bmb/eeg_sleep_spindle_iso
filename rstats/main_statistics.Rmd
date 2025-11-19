@@ -837,3 +837,11 @@ corr_df_male %>%
   mutate(Channel_1020 = Channel_1020 %>% str_remove("between_") %>% str_replace("above_", "Above ") %>% str_replace("_", "-") %>% str_replace("^n", "N")) %>%
   write_csv("results_csv_out/iso_corr_df.csv")
 ```
+
+```{r mk_rel_pwr_csv}
+iso_add %>% 
+  select(subject_id, group, ends_with("_relative_ISO_power_0.005-0.03Hz")) %>% 
+  left_join(demo %>% select(subject_id, sex), by = "subject_id") %>% 
+  relocate(subject_id, group, sex) %>% 
+  write_csv("results_csv_out/iso_relative_power.csv")
+```
