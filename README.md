@@ -1,6 +1,6 @@
-# High-Density Electroencephalographic Study of Sleep Spindle and Infraslow Oscillation in Children with Autism Spectrum Disorder
+# An Electroencephalographic Study of Sleep Spindle and Infraslow Oscillation in Children with Autism Spectrum Disorder
 
-This project provides a structured pipeline for analyzing infraslow oscillations (ISO) in EEG recordings obtained during Non-REM (NREM) sleep. The analysis focuses on characterizing the ISO spectrum, computing relevant metrics (ISO band power and peak frequencies), and visualizing results with spectral and topographical plots. This pipeline was developed to analyze EEG data in Autism Spectrum Disorder (ASD) and Typically Developing (TD) participant groups used in the manuscript "High-Density Electroencephalographic Study of Sleep Spindle and Infraslow Oscillation in Children with Autism Spectrum Disorder."
+This project provides a structured pipeline for analyzing infraslow oscillations (ISO) in EEG recordings obtained during Non-REM (NREM) sleep. The analysis focuses on characterizing the ISO spectrum, computing relevant metrics (ISO band power and peak frequencies), and visualizing results with spectral and topographical plots. This pipeline was developed to analyze EEG data in Autism Spectrum Disorder (ASD) and Typically Developing (TD) participant groups used in the manuscript "An Electroencephalographic Study of Sleep Spindle and Infraslow Oscillation in Children with Autism Spectrum Disorder."
 
 ## Project Structure
 
